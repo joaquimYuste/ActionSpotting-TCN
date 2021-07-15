@@ -11,6 +11,7 @@ from libs.config import get_config
 from libs.dataset import ActionSegmentationDataset, collate_fn
 from libs.helper import evaluateASRF, evaluateMSTCN
 from libs.transformer import TempDownSamp, ToTensor
+from libs.dataset_SoccerNet import SoccerNetClips, SoccerNetClipsTesting
 
 
 def get_arguments():
@@ -65,13 +66,14 @@ def main():
     # Dataloader
     downsamp_rate = 2 if config.dataset == "50salads" else 1
 
-    data = ActionSegmentationDataset(
-        config.dataset,
-        transform=Compose([ToTensor(), TempDownSamp(downsamp_rate)]),
-        mode="test",
-        split=config.split,
-        dataset_dir=config.dataset_dir,
-        csv_dir=config.csv_dir,
+    data = SoccerNetClips(
+        data_path=config.features_path,
+        label_path=config.labels_path,
+        features=config.features_name,
+        window_size=config.clip_length,
+        n_subclips=config.n_subclips,
+        n_predictions=config.n_predictions,
+        split=["test"]
     )
 
     loader = DataLoader(
@@ -79,13 +81,14 @@ def main():
         batch_size=1,
         shuffle=False,
         num_workers=config.num_workers,
-        collate_fn=collate_fn,
+        pin_memory=True
     )
 
     # load model
     print("---------- Loading Model ----------")
 
-    n_classes = get_n_classes(config.dataset, dataset_dir=config.dataset_dir)
+    #n_classes = get_n_classes(config.dataset, dataset_dir=config.dataset_dir)
+    n_classes = 17
     if(config.model == "ActionSegmentRefinementFramework"):
         model = models.ActionSegmentRefinementFramework(
             in_channel=config.in_channel,
@@ -130,6 +133,8 @@ def main():
             n_heads = config.n_heads,
             attn_kernel = config.attn_kernel,
             n_attn_layers = config.n_attn_layers,
+            n_subclips = config.n_subclips,
+            n_predictions = config.n_predictions
         )
 
     # send the model to cuda/cpu
@@ -137,7 +142,7 @@ def main():
 
     # load the state dict of the model
     if args.model is not None:
-        state_dict = torch.load(args.model)
+        state_dict = torch.load(os.path.join(result_path, args.model))
     else:
         state_dict = torch.load(os.path.join(result_path, "final_model.prm"))
     model.load_state_dict(state_dict)

@@ -53,6 +53,7 @@ class SoccerNetClips(Dataset):
         self.window_size_frame = window_size*framerate
         self.version = version
         self.n_predictions = n_predictions
+        self.n_subclips = n_subclips
         if version == 1:
             self.num_classes = 3
             self.labels="Labels.json"
@@ -103,22 +104,22 @@ class SoccerNetClips(Dataset):
                 seconds = int(time[-2::])
                 time = seconds + 60 * minutes
                 frame = framerate * time
-                split_frame = frame%self.window_size_frame
+                frame_segment = frame%self.window_size_frame
                 segment = 4
                 n_segment = frame // self.window_size_frame
                 left_segment = float('inf')
                 right_segment = float('inf')
 
-                if(split_frame-segment >= 0):
-                    left = split_frame-segment
+                if(frame_segment-segment >= 0):
+                    left = frame_segment-segment
                 else:
                     left = 0
-                    left_segment = split_frame-segment
-                if(split_frame+segment+1 <= self.window_size_frame):
-                    right = split_frame+segment+1
+                    left_segment = frame_segment-segment
+                if(frame_segment+segment+1 <= self.window_size_frame):
+                    right = frame_segment+segment+1
                 else:
                     right = self.window_size_frame
-                    right_segment = split_frame+segment+1 - self.window_size_frame
+                    right_segment = frame_segment+segment+1 - self.window_size_frame
 
                 if version == 1:
                     if "card" in event: label = 0
@@ -137,7 +138,7 @@ class SoccerNetClips(Dataset):
                     continue
 
                 if half == 1:
-                    label_half1 = self.parse_groundtruth_table(label_half1, n_segment, time, label)
+                    label_half1 = self.parse_groundtruth_table(label_half1, n_segment, frame_segment, label)
                     #if self.onehot:
                     #    label_half1 = self.parse_onehot_label(
                     #        label_half1,
@@ -160,7 +161,7 @@ class SoccerNetClips(Dataset):
                     #        )
 
                 if half == 2:
-                    label_half2 = self.parse_groundtruth_table(label_half2, n_segment, time, label)
+                    label_half2 = self.parse_groundtruth_table(label_half2, n_segment, frame_segment, label)
                     #if self.onehot:
                     #    label_half2 = self.parse_onehot_label(
                     #        label_half2,
@@ -205,11 +206,11 @@ class SoccerNetClips(Dataset):
 
         return label_half
 
-    def parse_groundtruth_table(self, label_half, n_segment, time, label):
-        segment_time = self.window_size_frame/self.framerate
-        time = time-n_segment*segment_time
-        subclip = int(time%5)
-        offset = time/segment_time
+    def parse_groundtruth_table(self, label_half, n_segment, frame, label):
+        frames_per_subclip = int(self.window_size_frame/self.n_subclips)
+        subclip = frame // frames_per_subclip
+        subclip_frame = frame % frames_per_subclip
+        offset = subclip_frame/frames_per_subclip # relatiu al subclip
 
         assigned = False
         for i in range(self.n_predictions):

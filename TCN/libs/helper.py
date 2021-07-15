@@ -11,6 +11,7 @@ from libs.config import Config
 from libs.class_id_map import get_id2class_map
 from libs.metric import AverageMeter, BoundaryScoreMeter, ScoreMeter
 from libs.postprocess import PostProcessor
+from libs.save_predictions import save_predictions
 
 from tqdm import tqdm
 
@@ -225,7 +226,6 @@ def validateMSTCN(
             feats = feats.contiguous().view(feats.shape[0], feats.shape[2], feats.shape[1])
             feats = feats.to(device)
             targets = targets.to(device)
-            batch_size = feats.shape[0]
 
             # compute output and loss
             out = model(feats)
@@ -381,60 +381,83 @@ def evaluateMSTCN(
     result_path: str,
     config: Config,
 ) -> None:
-
-    scores = ScoreMeter(
-        id2class_map=get_id2class_map(dataset, dataset_dir=dataset_dir),
-        iou_thresholds=iou_thresholds,
-    )
+    #scores_cls = ScoreMeter(
+    #    id2class_map=get_id2class_map(dataset, dataset_dir=dataset_dir),
+    #    iou_thresholds=iou_thresholds,
+    #)
 
     # switch to evaluate mode
     model.eval()
-    with torch.no_grad():
-        for sample in val_loader:
-            x = sample["feature"]
-            t = sample["label"]
 
-            x = x.to(device)
-            t = t.to(device)
+    model_name = ""
+    if (config.model == "MultiStageTCN"):
+        model_name = "mstcn"
+    elif (config.model == "MultiStageAttentionTCN"):
+        model_name = "msatcn"
+
+    file_name = model_name + "_s" + str(config.n_stages) + "_l" + str(config.n_layers) + "_feats" + str(config.n_features)
+
+    save_dir = os.path.join(os.path.dirname(result_path), "predictions")
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+    save_dir = os.path.join(save_dir, model_name)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
+    log = os.path.join(save_dir, "test_as_" + file_name + ".txt")
+    f = open(log, 'w')
+    with torch.no_grad() and tqdm(enumerate(val_loader), total=len(val_loader), ncols=160) as t:
+        for i, (feats, targets) in t:
+            # x = sample["feature"]
+            # t = sample["label"]
+
+            #x = x.to(device)
+            #t = t.to(device)
+
+            feats = feats.contiguous().view(feats.shape[0], feats.shape[2], feats.shape[1])
+            feats = feats.to(device)
 
             # compute output and loss
-            output_cls = model(x)
+            out = model(feats)
+
+            batch_size, n_subclips, n_predictions, n_classes = targets.shape
+            #targets = targets.reshape(batch_size * n_subclips, n_predictions, n_classes)
+            #out = out.reshape(batch_size * n_subclips, n_predictions, n_classes)
 
             # calcualte accuracy and f1 score
-            output_cls = output_cls.to("cpu").data.numpy()
+            out = out.to("cpu").data.numpy()
 
-            x = x.to("cpu").data.numpy()
-            t = t.to("cpu").data.numpy()
+            feats = feats.to("cpu").data.numpy()
 
+            targets = parse_labels(targets, config)
+            out = parse_labels(out, config)
+
+            # save logs
+
+            save_predictions(
+                f,
+                targets,
+                out
+            )
+    f.close()
             # update score
-            scores.update(output_cls, t)
+            #scores.update(output_cls, t)
 
-    print("Scores:", scores.get_scores())
+    #print("Scores:", scores.get_scores())
 
-    model = ""
-    if(config.model == "MultiStageTCN"):
-        model = "mstcn"
-    elif(config.model == "MultiStageAttentionTCN"):
-        model = "msatcn"
+def parse_labels(labels, config):
+    batch_size, n_subclips, n_predictions, n_classes = labels.shape
+    n_frames = config.clip_length*2
+    n_subclip_frames = int(n_frames/n_subclips)
+    result = np.zeros((batch_size, n_subclips, n_subclip_frames))
 
-    file_name = model+"_s"+str(config.n_stages)+"_l"+str(config.n_layers)+"_"
-    if(config.tmse):
-        file_name += "tmse"
-    else:
-        file_name += "gmtse"
-    file_name += "_split"+str(config.split)
-    
-    save_dir = os.path.join(os.path.dirname(result_path), "prediction_scores")
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
-    save_dir = os.path.join(save_dir, model)
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
+    for clip in range(batch_size):
+        for subclip in range(n_subclips):
+            for pred in range(n_predictions):
+                if(labels[clip][subclip][pred][0] >= 0.5):
+                    subclip_frame = int(labels[clip][subclip][pred][1].item()) * n_subclip_frames
+                    action = np.argmax(labels[clip][subclip][pred][2:]).item()
 
-    # save logs
-    scores.save_scores(
-        os.path.join(save_dir, "test_as_"+file_name+".csv")
-    )
-    scores.save_confusion_matrix(
-        os.path.join(save_dir, "test_c_matrix_"+file_name+".csv")
-    )
+                    result[clip][subclip][subclip_frame] = action+1
+
+    return result.reshape((batch_size, n_subclips*n_subclip_frames))
