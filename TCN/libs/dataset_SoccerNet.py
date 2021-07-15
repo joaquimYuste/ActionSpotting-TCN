@@ -44,20 +44,21 @@ def feats2clip(feats, stride, clip_length, padding = "replicate_last", off=0):
 
 class SoccerNetClips(Dataset):
     def __init__(self, data_path, label_path, features="ResNET_PCA512.npy", split=["train"], version=2,
-                framerate=2, window_size=120, onehot=False):
+                framerate=2, window_size=120, n_subclips=1, n_predictions=6):
         self.data_path = data_path
         self.label_path = label_path
         self.listGames = getListGames(split)
         self.features = features
+        self.framerate = framerate
         self.window_size_frame = window_size*framerate
         self.version = version
-        self.onehot = onehot
+        self.n_predictions = n_predictions
         if version == 1:
             self.num_classes = 3
             self.labels="Labels.json"
         elif version == 2:
             self.dict_event = EVENT_DICTIONARY_V2
-            self.num_classes = 17
+            self.num_classes = len(EVENT_DICTIONARY_V2)
             self.labels="Labels-v2.json"
 
         #logging.info("Checking/Download features and labels locally")
@@ -84,10 +85,12 @@ class SoccerNetClips(Dataset):
             # Load labels
             labels = json.load(open(os.path.join(self.label_path, game, self.labels)))
 
-            if self.onehot:
-                label_half1, label_half2 = self.onehot_enc(feat_half1), self.onehot_enc(feat_half2)
-            else:
-                label_half1, label_half2 = self.integer_enc(feat_half1), self.integer_enc(feat_half2)
+            #if self.onehot:
+            #    label_half1, label_half2 = self.onehot_enc(feat_half1), self.onehot_enc(feat_half2)
+            #else:
+            #    label_half1, label_half2 = self.integer_enc(feat_half1), self.integer_enc(feat_half2)
+
+            label_half1, label_half2 = self.groundtruth_table(feat_half1, n_subclips, n_predictions), self.groundtruth_table(feat_half2, n_subclips, n_predictions)
 
             for annotation in labels["annotations"]:
 
@@ -98,7 +101,8 @@ class SoccerNetClips(Dataset):
 
                 minutes = int(time[-5:-3])
                 seconds = int(time[-2::])
-                frame = framerate * ( seconds + 60 * minutes )
+                time = seconds + 60 * minutes
+                frame = framerate * time
                 split_frame = frame%self.window_size_frame
                 segment = 4
                 n_segment = frame // self.window_size_frame
@@ -133,48 +137,50 @@ class SoccerNetClips(Dataset):
                     continue
 
                 if half == 1:
-                    if self.onehot:
-                        label_half1 = self.parse_onehot_label(
-                            label_half1,
-                            n_segment,
-                            left_segment,
-                            right_segment,
-                            left,
-                            right,
-                            label
-                            )
-                    else:
-                        label_half1 = self.parse_integer_label(
-                            label_half1,
-                            n_segment,
-                            left_segment,
-                            right_segment,
-                            left,
-                            right,
-                            label
-                            )
+                    label_half1 = self.parse_groundtruth_table(label_half1, n_segment, time, label)
+                    #if self.onehot:
+                    #    label_half1 = self.parse_onehot_label(
+                    #        label_half1,
+                    #        n_segment,
+                    #        left_segment,
+                    #        right_segment,
+                    #        left,
+                    #        right,
+                    #        label
+                    #        )
+                    #else:
+                    #    label_half1 = self.parse_integer_label(
+                    #        label_half1,
+                    #        n_segment,
+                    #        left_segment,
+                    #        right_segment,
+                    #        left,
+                    #        right,
+                    #        label
+                    #        )
 
                 if half == 2:
-                    if self.onehot:
-                        label_half2 = self.parse_onehot_label(
-                            label_half2,
-                            n_segment,
-                            left_segment,
-                            right_segment,
-                            left,
-                            right,
-                            label
-                            )
-                    else:
-                        label_half2 = self.parse_integer_label(
-                            label_half2,
-                            n_segment,
-                            left_segment,
-                            right_segment,
-                            left,
-                            right,
-                            label
-                            )
+                    label_half2 = self.parse_groundtruth_table(label_half2, n_segment, time, label)
+                    #if self.onehot:
+                    #    label_half2 = self.parse_onehot_label(
+                    #        label_half2,
+                    #        n_segment,
+                    #        left_segment,
+                    #        right_segment,
+                    #        left,
+                    #        right,
+                    #        label
+                    #        )
+                    #else:
+                    #    label_half2 = self.parse_integer_label(
+                    #        label_half2,
+                    #        n_segment,
+                    #        left_segment,
+                    #        right_segment,
+                    #        left,
+                    #        right,
+                    #        label
+                    #        )
             
             self.game_feats.append(feat_half1)
             self.game_feats.append(feat_half2)
@@ -193,6 +199,33 @@ class SoccerNetClips(Dataset):
         label_half = np.zeros((feat_half.shape[0], feat_half.shape[1], self.num_classes+1)) #clips, frames, classes
         label_half[:, :, 17] = 1 # those are BG classes
         return label_half
+
+    def groundtruth_table(self, feats, n_subclips, n_predictions):
+        label_half = np.zeros((feats.shape[0], n_subclips, n_predictions, 2+self.num_classes))
+
+        return label_half
+
+    def parse_groundtruth_table(self, label_half, n_segment, time, label):
+        segment_time = self.window_size_frame/self.framerate
+        time = time-n_segment*segment_time
+        subclip = int(time%5)
+        offset = time/segment_time
+
+        assigned = False
+        for i in range(self.n_predictions):
+            if(label_half[n_segment][subclip][i][0] == 0 and not assigned): # if the confidence is 0 (no class) we assign the label
+                label_half[n_segment][subclip][i][0] = 1
+                label_half[n_segment][subclip][i][1] = offset
+                label_half[n_segment][subclip][i][2+label] = 1 # onehot_class
+                assigned = True
+
+        if not assigned:
+            raise ValueError("n_predictors is too low")
+
+        return label_half
+
+
+
 
     def parse_integer_label(self, label_half, n_segment, left_segment, right_segment, left, right, label):
         label_half[n_segment][left:right] = label

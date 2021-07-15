@@ -56,7 +56,6 @@ def get_class_nums_soccernet(labels):
     return nums
 
 def get_class_weight(
-    labels,
     dataset: str,
     split: int = 1,
     dataset_dir: str = "./dataset",
@@ -70,7 +69,17 @@ def get_class_weight(
         openaccess: https://www.cv-foundation.org/openaccess/content_iccv_2015/papers/Eigen_Predicting_Depth_Surface_ICCV_2015_paper.pdf
     """
 
-    #nums = get_class_nums(dataset, split, dataset_dir, csv_dir, mode)
+    nums = get_class_nums(dataset, split, dataset_dir, csv_dir, mode)
+
+    class_num = torch.tensor(nums)
+    total = class_num.sum().item()
+    frequency = class_num.float() / total
+    median = torch.median(frequency)
+    class_weight = median / frequency
+
+    return class_weight
+
+def get_class_weight_soccernet(labels):
     nums = get_class_nums_soccernet(labels)
 
     class_num = torch.tensor(nums)

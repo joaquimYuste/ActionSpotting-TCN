@@ -10,7 +10,7 @@ from torchvision.transforms import Compose
 from libs import models
 from libs.checkpoint import resume, save_checkpoint
 from libs.class_id_map import get_n_classes
-from libs.class_weight import get_class_weight, get_pos_weight
+from libs.class_weight import get_class_weight, get_pos_weight, get_class_weight_soccernet
 from libs.config import get_config
 from libs.dataset import ActionSegmentationDataset, collate_fn
 from libs.helper import train, trainMSTCN, validate, validateMSTCN
@@ -18,6 +18,7 @@ from libs.loss_fn import ActionSegmentationLoss, BoundaryRegressionLoss
 from libs.optimizer import get_optimizer
 from libs.transformer import TempDownSamp, ToTensor
 from libs.dataset_SoccerNet import SoccerNetClips, SoccerNetClipsTesting
+from libs.Soccernet_loss import SpottingLoss
 
 def get_arguments() -> argparse.Namespace:
     """
@@ -69,12 +70,12 @@ def main() -> None:
     downsamp_rate = 2 if config.dataset == "50salads" else 1
 
     train_data = SoccerNetClips(
-        #data_path="/data-net/datasets/SoccerNetv2/Baidu_features",
-        data_path="/data-net/datasets/SoccerNetv2/ResNET_TF2",
-        label_path="/data-net/datasets/SoccerNetv2/ResNET_TF2",
-        #features="baidu_soccer_embeddings.npy",
-        features="ResNET_TF2.npy",
-        window_size=120,
+        data_path=config.features_path,
+        label_path=config.labels_path,
+        features=config.features_name,
+        window_size=config.clip_length,
+        n_subclips=config.n_subclips,
+        n_predictions=config.n_predictions
     )
 
 
@@ -89,12 +90,12 @@ def main() -> None:
     # if you do validation to determine hyperparams
     if config.param_search:
         val_data = SoccerNetClips(
-            #data_path="/data-net/datasets/SoccerNetv2/Baidu_features",
-            data_path="/data-net/datasets/SoccerNetv2/ResNET_TF2",
-            label_path="/data-net/datasets/SoccerNetv2/ResNET_TF2",
-            #features="baidu_soccer_embeddings.npy",
-            features="ResNET_TF2.npy",
-            window_size=120,
+            data_path=config.features_path,
+            label_path=config.labels_path,
+            features=config.features_name,
+            window_size=config.clip_length,
+            n_subclips=config.n_subclips,
+            n_predictions=config.n_predictions,
             split=["valid"]
         )
 
@@ -110,7 +111,7 @@ def main() -> None:
     print("---------- Loading Model ----------")
 
     #n_classes = get_n_classes(config.dataset, dataset_dir=config.dataset_dir)
-    n_classes = 18
+    n_classes = 17
 
     if (config.model == "ActionSegmentRefinementFramework"):
         model = models.ActionSegmentRefinementFramework(
@@ -154,6 +155,8 @@ def main() -> None:
             in_channel=config.in_channel,
             n_features=config.n_features,
             n_classes=n_classes,
+            n_predictions=config.n_predictions,
+            n_subclips=config.n_subclips,
             n_stages=config.n_stages,
             n_layers=config.n_layers,
             n_heads=config.n_heads,
@@ -203,30 +206,26 @@ def main() -> None:
 
     # criterion for loss
     if config.class_weight:
-        class_weight = get_class_weight(
+        class_weight = get_class_weight_soccernet(
             train_data.game_labels,
-            config.dataset,
-            split=config.split,
-            dataset_dir=config.dataset_dir,
-            csv_dir=config.csv_dir,
-            mode="training" if config.param_search else "trainval",
         )
         class_weight = class_weight.to(device)
     else:
         class_weight = None
 
-    criterion_cls = ActionSegmentationLoss(
-        ce=config.ce,
-        focal=config.focal,
-        tmse=config.tmse,
-        gstmse=config.gstmse,
-        weight=class_weight,
-        ignore_index=255,
-        ce_weight=config.ce_weight,
-        focal_weight=config.focal_weight,
-        tmse_weight=config.tmse_weight,
-        gstmse_weight=config.gstmse,
-    )
+    criterion_cls = SpottingLoss(config.lambda_coord, config.lambda_noobj)
+    #criterion_cls = ActionSegmentationLoss(
+        #ce=config.ce,
+        #focal=config.focal,
+        #tmse=config.tmse,
+        #gstmse=config.gstmse,
+        #weight=class_weight,
+        #ignore_index=255,
+        #ce_weight=config.ce_weight,
+        #focal_weight=config.focal_weight,
+        #        tmse_weight=config.tmse_weight,
+        #    gstmse_weight=config.gstmse,
+    #)
 
     #pos_weight = get_pos_weight(
     #    dataset=config.dataset,

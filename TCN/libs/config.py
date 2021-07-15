@@ -69,6 +69,18 @@ class Config:
     csv_dir: str = "./csv"
     split: int = 1
 
+    # Soccernet parsing
+    features_path: str = "/data-net/datasets/SoccerNetv2/ResNET_TF2"
+    labels_path: str = "/data-net/datasets/SoccerNetv2/ResNET_TF2"
+    features_name: str = "ResNET_TF2.npy"
+    clip_length: int = 120
+    n_subclips: int = 5
+    n_predictions: int = 6
+
+    # Action spotting loss
+    lambda_coord: float = 5
+    lambda_noobj: float = 0.5
+
     def __post_init__(self) -> None:
         self._type_check()
 

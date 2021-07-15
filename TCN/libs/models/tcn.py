@@ -73,21 +73,29 @@ class MultiStageAttentionTCN(nn.Module):
         n_heads: int,
         attn_kernel: int,
         n_attn_layers: int,
+        n_subclips: int,
+        n_predictions: int,
         **kwargs: Any
     ) -> None:
         super().__init__()
-        self.stage1 = SingleStageTCN(in_channel, n_features, n_classes, n_layers)
+        self.n_classes = n_classes
+        self.n_predictions = n_predictions
+        self.n_subclips = n_subclips
+
+        self.stage1 = SingleStageTCN(in_channel, n_features, n_features, n_layers)
 
         stages = [
-            SingleStageTCN(n_classes, n_features, n_classes, n_layers)
+            SingleStageTCN(n_features, n_features, n_features, n_layers)
             for _ in range(n_stages - 1)
         ]
 
         self.stages = nn.ModuleList(stages)
 
         # Attention Module
-        self.attn = SingleStageTAN(n_classes, n_features, n_classes, attn_kernel, n_attn_layers, n_heads=n_heads)
+        self.attn = SingleStageTAN(n_features, n_features, n_features, attn_kernel, n_attn_layers, n_heads=n_heads)
 
+        self.tcn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
+        #self.attn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
         if n_classes == 1:
             self.activation = nn.Sigmoid()
         else:
@@ -98,14 +106,19 @@ class MultiStageAttentionTCN(nn.Module):
             # for training
             outputs = []
             out = self.stage1(x)
-            outputs.append(out)
+            #outputs.append(out)
+
+            prob_out = self.generate_output(out)
+            outputs.append(prob_out)
 
             for stage in self.stages:
-                out = stage(self.activation(out))
+                out = stage(out)
                 outputs.append(out)
 
-            out = self.attn(self.activation(out))
-            outputs.append(out)
+            out = self.attn(out)
+
+            prob_out = self.generate_output(out)
+            outputs.append(prob_out)
 
             return outputs
 
@@ -114,11 +127,28 @@ class MultiStageAttentionTCN(nn.Module):
             out = self.stage1(x)
 
             for stage in self.stages:
-                out = stage(self.activation(out))
+                out = stage(out)
 
-            out = self.attn(self.activation(out))
+            out = self.attn(out)
 
-            return out
+            prob_out = self.generate_output(out)
+            return prob_out
+
+    def generate_output(self, x: torch.Tensor):
+        batch, chann, length = x.shape
+        out = F.avg_pool1d(x, int(length / self.n_subclips), int(length / self.n_subclips))
+        out = self.tcn_predictor(out)
+
+        batch, chann, length = out.shape
+        out = out.contiguous().view(batch, length, chann)
+        out = out.reshape((batch, length, self.n_predictions, self.n_classes + 2))
+
+        out_prob_softmax = F.softmax(out[..., 2:], dim=-1)
+        out_prob_sigmoid = F.sigmoid(out[...,:2])
+        out_prob = torch.cat((out_prob_sigmoid, out_prob_softmax), dim=-1)
+
+        return out_prob
+
 
 class SingleStageTCN(nn.Module):
     def __init__(
@@ -130,19 +160,28 @@ class SingleStageTCN(nn.Module):
         **kwargs: Any
     ) -> None:
         super().__init__()
-        self.conv_in = nn.Conv1d(in_channel, n_features, 1)
+        self.conv_in = None
+        if(in_channel != n_features):
+            self.conv_in = nn.Conv1d(in_channel, n_features, 1)
         layers = [
             DilatedResidualLayer(2 ** i, n_features, n_features)
             for i in range(n_layers)
         ]
         self.layers = nn.ModuleList(layers)
-        self.conv_out = nn.Conv1d(n_features, n_classes, 1)
+        self.conv_out = None
+        if(n_features != n_classes):
+            self.conv_out = nn.Conv1d(n_features, n_classes, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv_in(x)
+        out = x
+        if(self.conv_in):
+            out = self.conv_in(x)
+
         for layer in self.layers:
             out = layer(out)
-        out = self.conv_out(out)
+
+        if(self.conv_out):
+            out = self.conv_out(out)
         return out
 
 class DilatedResidualLayer(nn.Module):
@@ -270,7 +309,9 @@ class SingleStageTAN(nn.Module):
         **kwargs: Any
     ) -> None:
         super().__init__()
-        self.conv_in = nn.Conv1d(in_channel, n_features, 1)
+        self.conv_in = None
+        if(in_channel != n_features):
+            self.conv_in = nn.Conv1d(in_channel, n_features, 1)
 
         # To use with different kernel sizes nor dilation
         if type(kernel_size) is list:
@@ -287,14 +328,19 @@ class SingleStageTAN(nn.Module):
                 for i in range(n_layers)
             ]
         self.layers = nn.ModuleList(layers)
-        self.conv_out = nn.Conv1d(n_features, n_classes, 1)
+
+        self.conv_out = None
+        if(n_features != n_classes):
+            self.conv_out = nn.Conv1d(n_features, n_classes, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv_in(x)
-        # out = x
+        out = x
+        if(self.conv_in):
+            out = self.conv_in(x)
         for layer in self.layers:
             out = layer(out)
-        out = self.conv_out(out)
+        if(self.conv_out):
+            out = self.conv_out(out)
         return out
 
 class ConvolutionalAttnLayer(nn.Module):

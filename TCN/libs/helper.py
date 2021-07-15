@@ -90,9 +90,10 @@ def trainMSTCN(
             #t = sample["label"]
             feats = feats.contiguous().view(feats.shape[0],feats.shape[2],feats.shape[1])
             feats = feats.to(device)
-            targets = targets.to(device).long()
+            targets = targets.to(device)
 
-            batch_size = feats.shape[0]
+            batch_size, n_subclips, n_predictions, n_classes = targets.shape
+            targets = targets.reshape(batch_size * n_subclips, n_predictions, n_classes)
 
             # compute output and loss
             output_cls = model(feats)
@@ -101,9 +102,12 @@ def trainMSTCN(
             if isinstance(output_cls, list):
                 n = len(output_cls)
                 for out in output_cls:
-                    loss += criterion_cls(out, targets, feats) / n
+                    out = out.reshape(batch_size * n_subclips, n_predictions, n_classes)
+                    #loss += criterion_cls(out, targets, feats) / n
+                    loss += criterion_cls(targets, out) / n
             else:
-                loss += criterion_cls(output_cls, targets, feats)
+                #loss += criterion_cls(output_cls, targets, feats)
+                loss += criterion_cls(targets, output_cls)
 
             # record loss
             losses.update(loss.item(), batch_size)
@@ -200,10 +204,10 @@ def validateMSTCN(
     iou_thresholds: Tuple[float],
 ) -> Tuple[float, float, float, float, float, float, float, float]:
     losses = AverageMeter("Loss", ":.4e")
-    scores_cls = ScoreMeter(
-        id2class_map=get_id2class_map(dataset, dataset_dir=dataset_dir),
-        iou_thresholds=iou_thresholds,
-    )
+    #scores_cls = ScoreMeter(
+    #    id2class_map=get_id2class_map(dataset, dataset_dir=dataset_dir),
+    #    iou_thresholds=iou_thresholds,
+    #)
 
     # switch to evaluate mode
     model.eval()
@@ -220,54 +224,37 @@ def validateMSTCN(
 
             feats = feats.contiguous().view(feats.shape[0], feats.shape[2], feats.shape[1])
             feats = feats.to(device)
-            targets = targets.to(device).long()
+            targets = targets.to(device)
             batch_size = feats.shape[0]
 
             # compute output and loss
-            output_cls = model(feats)
+            out = model(feats)
+
+            batch_size, n_subclips, n_predictions, n_classes = targets.shape
+            targets = targets.reshape(batch_size * n_subclips, n_predictions, n_classes)
+            out = out.reshape(batch_size * n_subclips, n_predictions, n_classes)
 
             loss = 0.0
-            loss += criterion_cls(output_cls, targets, feats)
+            loss += criterion_cls(targets, out)
 
             # measure accuracy and record loss
             losses.update(loss.item(), batch_size)
 
             # calcualte accuracy and f1 score
-            output_cls = output_cls.to("cpu").data.numpy()
+            out = out.to("cpu").data.numpy()
 
             targets = targets.to("cpu").data.numpy()
 
-            # update
-            output_cls = np.concatenate(output_cls, axis=1)
-            output_cls = output_cls.reshape((1, output_cls.shape[0], output_cls.shape[1]))
+            # update metric
+            #scores_cls.update(output_cls, targets)
 
-            targets = np.concatenate(targets)
-            targets = targets.reshape(1, targets.shape[0])
-
-            scores_cls.update(output_cls, targets)
-
-            #if(type(all_outputs_cls) is list):
-            #    all_outputs_cls = output_cls.copy()
-            #    all_targets = targets.copy()
-            #else:
-            #    all_outputs_cls = np.append(all_outputs_cls, output_cls, axis=0)
-            #    all_targets = np.append(all_targets, targets, axis=0)
-
-        #all_outputs_cls = np.concatenate(all_outputs_cls,axis=1)
-        #all_outputs_cls = all_outputs_cls.reshape((1,all_outputs_cls.shape[0],all_outputs_cls.shape[1]))
-
-        #all_targets = np.concatenate(all_targets)
-        #all_targets = all_targets.reshape(1, all_targets.shape[0])
-
-        #scores_cls.update(all_outputs_cls, all_targets)
-
-    cls_acc, edit_score, segment_f1s = scores_cls.get_scores()
+    #cls_acc, edit_score, segment_f1s = scores_cls.get_scores()
 
     return (
         losses.avg,
-        cls_acc,
-        edit_score,
-        segment_f1s,
+        0, #cls_acc,
+        0, #edit_score,
+        [0,0,0] #segment_f1s,
     )
 
 
