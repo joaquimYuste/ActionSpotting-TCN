@@ -19,6 +19,7 @@ from libs.optimizer import get_optimizer
 from libs.transformer import TempDownSamp, ToTensor
 from libs.dataset_SoccerNet import SoccerNetClips, SoccerNetClipsTesting
 from libs.Soccernet_loss import SpottingLoss
+from SoccerNet.Evaluation.utils import EVENT_DICTIONARY_V2, INVERSE_EVENT_DICTIONARY_V2
 
 def get_arguments() -> argparse.Namespace:
     """
@@ -111,7 +112,7 @@ def main() -> None:
     print("---------- Loading Model ----------")
 
     #n_classes = get_n_classes(config.dataset, dataset_dir=config.dataset_dir)
-    n_classes = 17
+    n_classes = len(EVENT_DICTIONARY_V2)
 
     if (config.model == "ActionSegmentRefinementFramework"):
         model = models.ActionSegmentRefinementFramework(
@@ -145,6 +146,8 @@ def main() -> None:
             in_channel=config.in_channel,
             n_features=config.n_features,
             n_classes=n_classes,
+            n_predictions=config.n_predictions,
+            n_subclips=config.n_subclips,
             n_stages=config.n_stages,
             n_layers=config.n_layers,
         )

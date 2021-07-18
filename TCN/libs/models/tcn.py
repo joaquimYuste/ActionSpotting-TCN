@@ -28,13 +28,20 @@ class MultiStageTCN(nn.Module):
         n_classes: int,
         n_stages: int,
         n_layers: int,
+        n_predictions: int,
+        n_subclips: int,
         **kwargs: Any
     ) -> None:
         super().__init__()
-        self.stage1 = SingleStageTCN(in_channel, n_features, n_classes, n_layers)
+        self.n_classes = n_classes
+        self.n_predictions = n_predictions
+        self.n_subclips = n_subclips
+
+        self.stage1 = SingleStageTCN(in_channel, n_features, n_features, n_layers)
+        self.tcn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
 
         stages = [
-            SingleStageTCN(n_classes, n_features, n_classes, n_layers)
+            SingleStageTCN(n_features, n_features, n_features, n_layers)
             for _ in range(n_stages - 1)
         ]
         self.stages = nn.ModuleList(stages)
@@ -49,7 +56,11 @@ class MultiStageTCN(nn.Module):
             # for training
             outputs = []
             out = self.stage1(x)
-            outputs.append(out)
+            #outputs.append(out)
+
+            prob_out = self.generate_output(out)
+            outputs.append(prob_out)
+
             for stage in self.stages:
                 out = stage(self.activation(out))
                 outputs.append(out)
@@ -59,7 +70,24 @@ class MultiStageTCN(nn.Module):
             out = self.stage1(x)
             for stage in self.stages:
                 out = stage(self.activation(out))
-            return out
+
+            prob_out = self.generate_output(out)
+            return prob_out
+
+    def generate_output(self, x: torch.Tensor):
+        batch, chann, length = x.shape
+        out = F.avg_pool1d(x, int(length / self.n_subclips), int(length / self.n_subclips))
+        out = self.tcn_predictor(out)
+
+        batch, chann, length = out.shape
+        out = out.contiguous().view(batch, length, chann)
+        out = out.reshape((batch, length, self.n_predictions, self.n_classes + 2))
+
+        out_prob_softmax = F.softmax(out[..., 2:], dim=-1)
+        out_prob_sigmoid = F.sigmoid(out[...,:2])
+        out_prob = torch.cat((out_prob_sigmoid, out_prob_softmax), dim=-1)
+
+        return out_prob
 
 class MultiStageAttentionTCN(nn.Module):
 

@@ -11,7 +11,7 @@ from libs.config import Config
 from libs.class_id_map import get_id2class_map
 from libs.metric import AverageMeter, BoundaryScoreMeter, ScoreMeter
 from libs.postprocess import PostProcessor
-from libs.save_predictions import save_predictions
+from libs.save_predictions import save_predictions, save_preds
 
 from tqdm import tqdm
 
@@ -434,11 +434,11 @@ def evaluateMSTCN(
 
             # save logs
 
-            save_predictions(
-                f,
-                targets,
-                out
-            )
+            targets = targets.reshape((targets.shape[0], targets.shape[1], 1))
+            out = out.reshape((out.shape[0], out.shape[1], 1))
+
+            comparison = np.concatenate((targets, out), axis=-1)
+            save_preds(f, comparison)
     f.close()
             # update score
             #scores.update(output_cls, t)
@@ -454,8 +454,8 @@ def parse_labels(labels, config):
     for clip in range(batch_size):
         for subclip in range(n_subclips):
             for pred in range(n_predictions):
-                if(labels[clip][subclip][pred][0] >= 0.5):
-                    subclip_frame = int(labels[clip][subclip][pred][1].item()) * n_subclip_frames
+                if(labels[clip][subclip][pred][0] >= 0.3):
+                    subclip_frame = int(labels[clip][subclip][pred][1].item() * n_subclip_frames)
                     action = np.argmax(labels[clip][subclip][pred][2:]).item()
 
                     result[clip][subclip][subclip_frame] = action+1

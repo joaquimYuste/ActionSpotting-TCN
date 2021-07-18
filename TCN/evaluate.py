@@ -12,6 +12,7 @@ from libs.dataset import ActionSegmentationDataset, collate_fn
 from libs.helper import evaluateASRF, evaluateMSTCN
 from libs.transformer import TempDownSamp, ToTensor
 from libs.dataset_SoccerNet import SoccerNetClips, SoccerNetClipsTesting
+from SoccerNet.Evaluation.utils import EVENT_DICTIONARY_V2, INVERSE_EVENT_DICTIONARY_V2
 
 
 def get_arguments():
@@ -88,7 +89,7 @@ def main():
     print("---------- Loading Model ----------")
 
     #n_classes = get_n_classes(config.dataset, dataset_dir=config.dataset_dir)
-    n_classes = 17
+    n_classes = len(EVENT_DICTIONARY_V2)
     if(config.model == "ActionSegmentRefinementFramework"):
         model = models.ActionSegmentRefinementFramework(
             in_channel=config.in_channel,
@@ -119,6 +120,8 @@ def main():
             in_channel = config.in_channel,
             n_features = config.n_features,
             n_classes = n_classes,
+            n_subclips=config.n_subclips,
+            n_predictions=config.n_predictions,
             n_stages = config.n_stages,
             n_layers = config.n_layers,
         )
@@ -136,6 +139,7 @@ def main():
             n_subclips = config.n_subclips,
             n_predictions = config.n_predictions
         )
+
 
     # send the model to cuda/cpu
     model.to(device)
