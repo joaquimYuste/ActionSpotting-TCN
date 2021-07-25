@@ -79,17 +79,31 @@ def get_class_weight(
 
     return class_weight
 
-def get_class_weight_soccernet(labels):
-    nums = get_class_nums_soccernet(labels)
+def get_freq_class_weight_soccernet(labels):
+    #nums = get_class_nums_soccernet(labels)
+    #class_num = torch.tensor(nums)
 
-    class_num = torch.tensor(nums)
+    class_num = torch.from_numpy(labels)
+
     total = class_num.sum().item()
     frequency = class_num.float() / total
     median = torch.median(frequency)
     class_weight = median / frequency
 
-    return class_weight
+    norm = class_weight.sum().item()
+    return class_weight/norm
 
+def get_inv_class_weight_soccernet(labels):
+    #nums = get_class_nums_soccernet(labels)
+    #class_num = torch.tensor(nums)
+
+    class_num = torch.from_numpy(labels)
+
+    total = class_num.sum().item()
+    class_weight = total/class_num
+
+    norm = class_weight.sum().item()
+    return class_weight/norm
 
 def get_pos_weight(
     dataset: str,

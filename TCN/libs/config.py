@@ -37,6 +37,7 @@ class Config:
 
     # if you use class weight to calculate cross entropy or not
     class_weight: bool = True
+    weight_type: str = "freq"
 
     batch_size: int = 1
 
@@ -80,6 +81,7 @@ class Config:
     # Action spotting loss
     lambda_coord: float = 5
     lambda_noobj: float = 0.5
+    small_net: bool = False
 
     def __post_init__(self) -> None:
         self._type_check()

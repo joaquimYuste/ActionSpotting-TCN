@@ -30,14 +30,18 @@ class MultiStageTCN(nn.Module):
         n_layers: int,
         n_predictions: int,
         n_subclips: int,
+        small_net: bool,
         **kwargs: Any
     ) -> None:
         super().__init__()
         self.n_classes = n_classes
         self.n_predictions = n_predictions
         self.n_subclips = n_subclips
+        self.small_net = small_net
 
         self.stage1 = SingleStageTCN(in_channel, n_features, n_features, n_layers)
+        if self.small_net:
+            self.pooling = Small1DCNN(n_features, n_features)
         self.tcn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
 
         stages = [
@@ -45,6 +49,11 @@ class MultiStageTCN(nn.Module):
             for _ in range(n_stages - 1)
         ]
         self.stages = nn.ModuleList(stages)
+        predictors = [
+            nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
+            for _ in range(n_stages - 1)
+        ]
+        self.predictors = nn.ModuleList(predictors)
 
         if n_classes == 1:
             self.activation = nn.Sigmoid()
@@ -56,28 +65,44 @@ class MultiStageTCN(nn.Module):
             # for training
             outputs = []
             out = self.stage1(x)
-            #outputs.append(out)
 
-            prob_out = self.generate_output(out)
+            prob_out = self.generate_output(out, self.tcn_predictor)
             outputs.append(prob_out)
 
-            for stage in self.stages:
-                out = stage(self.activation(out))
-                outputs.append(out)
+            for stage, predictor in zip(self.stages, self.predictors):
+                out = stage(out)
+                prob_out = self.generate_output(out, predictor)
+                outputs.append(prob_out)
             return outputs
         else:
             # for evaluation
             out = self.stage1(x)
-            for stage in self.stages:
-                out = stage(self.activation(out))
+            prob_out = self.generate_output(out, self.tcn_predictor)
+            for stage, predictor in zip(self.stages, self.predictors):
+                out = stage(out)
+                prob_out = self.generate_output(out, predictor)
 
-            prob_out = self.generate_output(out)
             return prob_out
 
-    def generate_output(self, x: torch.Tensor):
+    def generate_output(self, x: torch.Tensor, predictor):
         batch, chann, length = x.shape
-        out = F.avg_pool1d(x, int(length / self.n_subclips), int(length / self.n_subclips))
-        out = self.tcn_predictor(out)
+
+        if self.small_net:
+            subclip_length = length // self.n_subclips
+
+            out = torch.zeros(batch, chann, self.n_subclips)
+            if x.is_cuda:
+                out = out.to("cuda")
+
+            for subclip in range(self.n_subclips):
+                initial_frame = subclip*subclip_length
+                final_frame = (subclip+1)*subclip_length
+                out[:, :, subclip] = self.pooling(x[:, :, initial_frame:final_frame]).reshape((batch,chann))
+
+        else:
+            out = F.avg_pool1d(x, length//self.n_subclips, length//self.n_subclips) # out: [Batch_size, filters, n_subclips]
+
+        out = predictor(out)
 
         batch, chann, length = out.shape
         out = out.contiguous().view(batch, length, chann)
@@ -87,7 +112,7 @@ class MultiStageTCN(nn.Module):
         out_prob_sigmoid = F.sigmoid(out[...,:2])
         out_prob = torch.cat((out_prob_sigmoid, out_prob_softmax), dim=-1)
 
-        return out_prob
+        return out_prob # out: [Batch_size, n_subclips, n_predictions, confidence + offset + n_classes)
 
 class MultiStageAttentionTCN(nn.Module):
 
@@ -111,19 +136,24 @@ class MultiStageAttentionTCN(nn.Module):
         self.n_subclips = n_subclips
 
         self.stage1 = SingleStageTCN(in_channel, n_features, n_features, n_layers)
+        self.tcn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
 
         stages = [
             SingleStageTCN(n_features, n_features, n_features, n_layers)
             for _ in range(n_stages - 1)
         ]
-
         self.stages = nn.ModuleList(stages)
+
+        predictors = [
+            nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
+            for _ in range(n_stages - 1)
+        ]
+        self.predictors = nn.ModuleList(predictors)
 
         # Attention Module
         self.attn = SingleStageTAN(n_features, n_features, n_features, attn_kernel, n_attn_layers, n_heads=n_heads)
+        self.attn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
 
-        self.tcn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
-        #self.attn_predictor = nn.Conv1d(n_features, n_predictions * (2 + n_classes), 1)
         if n_classes == 1:
             self.activation = nn.Sigmoid()
         else:
@@ -136,16 +166,17 @@ class MultiStageAttentionTCN(nn.Module):
             out = self.stage1(x)
             #outputs.append(out)
 
-            prob_out = self.generate_output(out)
+            prob_out = self.generate_output(out, self.tcn_predictor)
             outputs.append(prob_out)
 
-            for stage in self.stages:
+            for stage, predictor in zip(self.stages, self.predictors):
                 out = stage(out)
-                outputs.append(out)
+                prob_out = self.generate_output(out, predictor)
+                outputs.append(prob_out)
 
             out = self.attn(out)
 
-            prob_out = self.generate_output(out)
+            prob_out = self.generate_output(out, self.attn_predictor)
             outputs.append(prob_out)
 
             return outputs
@@ -159,13 +190,13 @@ class MultiStageAttentionTCN(nn.Module):
 
             out = self.attn(out)
 
-            prob_out = self.generate_output(out)
+            prob_out = self.generate_output(out, self.attn_predictor)
             return prob_out
 
-    def generate_output(self, x: torch.Tensor):
+    def generate_output(self, x: torch.Tensor, predictor):
         batch, chann, length = x.shape
         out = F.avg_pool1d(x, int(length / self.n_subclips), int(length / self.n_subclips))
-        out = self.tcn_predictor(out)
+        out = predictor(out)
 
         batch, chann, length = out.shape
         out = out.contiguous().view(batch, length, chann)
@@ -751,3 +782,57 @@ class ActionSegmentRefinementAttentionFramework(nn.Module):
 
             out_cls = self.attn_cls(self.activation_asb(out_cls))
             return (out_cls, out_bound)
+
+
+class Small1DCNN(nn.Module):
+    def __init__(self, input_dim, model_dim, dropout: float = 0.1, avg_pool: bool = True):
+        """
+        Simple 1D CNN applying 3 conv1d layers, each followed by maxpool with size 2.
+        The temporal length of the input sequences will be divided by 8.
+        Adaptive average pooling is applied (optionally) at the end so the remaining timesteps (8x smaller than the
+        original sequence length) are average pooled into 1 timestep.
+        :param input_dim: [batch_size x features x input_dim]
+        :param model_dim:
+        :param avg_pool:
+        """
+        super(Small1DCNN, self).__init__()
+
+        self.conv1d_1 = nn.Conv1d(input_dim, model_dim, kernel_size=3, stride=1, padding=1, bias=True)
+        self.pool1d_1 = nn.MaxPool1d(2)
+        self.activation_1 = nn.ReLU()
+        self.dropout_1 = nn.Dropout(dropout)
+
+        self.conv1d_2 = nn.Conv1d(model_dim, model_dim, kernel_size=3, stride=1, padding=1, bias=True)
+        self.pool1d_2 = nn.MaxPool1d(2)
+        self.activation_2 = nn.ReLU()
+        self.dropout_2 = nn.Dropout(dropout)
+
+        self.conv1d_3 = nn.Conv1d(model_dim, model_dim, kernel_size=3, stride=1, padding=1, bias=True)
+        self.pool1d_3 = nn.MaxPool1d(2)
+        self.activation_3 = nn.ReLU()
+        self.dropout_3 = nn.Dropout(dropout)
+
+        self.avg_pool = None
+        if avg_pool:
+            self.avg_pool = nn.AdaptiveAvgPool1d(output_size=1)  # pool along temporal dimension (last one)
+
+    def forward(self, x):
+        x = self.conv1d_1(x)
+        x = self.pool1d_1(x)
+        x = self.activation_1(x)
+        x = self.dropout_1(x)
+
+        x = self.conv1d_2(x)
+        x = self.pool1d_2(x)
+        x = self.activation_2(x)
+        x = self.dropout_2(x)
+
+        x = self.conv1d_3(x)
+        x = self.pool1d_3(x)
+        x = self.activation_3(x)
+        x = self.dropout_3(x)
+
+        if self.avg_pool is not None:
+            x = self.avg_pool(x)
+
+        return x

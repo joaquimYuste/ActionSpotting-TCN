@@ -10,7 +10,7 @@ from torchvision.transforms import Compose
 from libs import models
 from libs.checkpoint import resume, save_checkpoint
 from libs.class_id_map import get_n_classes
-from libs.class_weight import get_class_weight, get_pos_weight, get_class_weight_soccernet
+from libs.class_weight import get_class_weight, get_pos_weight, get_freq_class_weight_soccernet, get_inv_class_weight_soccernet
 from libs.config import get_config
 from libs.dataset import ActionSegmentationDataset, collate_fn
 from libs.helper import train, trainMSTCN, validate, validateMSTCN
@@ -150,6 +150,7 @@ def main() -> None:
             n_subclips=config.n_subclips,
             n_stages=config.n_stages,
             n_layers=config.n_layers,
+            small_net=config.small_net,
         )
         log_name = "log_mstcn.csv"
 
@@ -209,14 +210,21 @@ def main() -> None:
 
     # criterion for loss
     if config.class_weight:
-        class_weight = get_class_weight_soccernet(
-            train_data.game_labels,
-        )
-        class_weight = class_weight.to(device)
+        if(config.weight_type == "inv"):
+            class_weight = get_inv_class_weight_soccernet(train_loader.dataset.class_count)
+        else:
+            class_weight = get_freq_class_weight_soccernet(train_loader.dataset.class_count)
+        #    train_data.game_labels,
+        #)
+        #class_weight = class_weight.to(device)
+        #class_weigth = torch.from_numpy(train_loader.dataset.weights).to(device)
+        class_weight = class_weight.reshape((1, 1, class_weight.shape[0])).to(device)
     else:
-        class_weight = None
+        #class_weight = None
+        class_weight = 1
 
-    criterion_cls = SpottingLoss(config.lambda_coord, config.lambda_noobj)
+
+    criterion_cls = SpottingLoss(config.lambda_coord, config.lambda_noobj, class_weight)
     #criterion_cls = ActionSegmentationLoss(
         #ce=config.ce,
         #focal=config.focal,

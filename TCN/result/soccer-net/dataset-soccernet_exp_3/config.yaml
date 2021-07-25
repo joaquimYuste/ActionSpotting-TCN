@@ -2,7 +2,8 @@ batch_size: 32
 boundary_th: 0.5
 ce: true
 ce_weight: 1.0
-class_weight: false
+class_weight: true
+weight_type: freq
 csv_dir: ./csv
 dampening: 0.0
 dataset: gtea
@@ -19,8 +20,9 @@ iou_thresholds:
 - 0.5
 lambda_b: 0.1
 learning_rate: 0.0005
-max_epoch: 200
-model: MultiStageAttentionTCN
+max_epoch: 100
+model: MultiStageTCN
+small_net: false
 momentum: 0.9
 n_features: 64
 attn_kernel: 11
@@ -42,7 +44,8 @@ weight_decay: 0.0001
 
 # dataset / data parsing (soccernet)
 
-features_path: /data-net/datasets/SoccerNetv2/ResNET_TF2 # Baidu_features
+#features_path: /data-net/datasets/SoccerNetv2/ResNET_TF2 # Baidu_features
+features_path: /data-local/data4-ssd/jyuste/ResNET_TF2
 labels_path: /data-net/datasets/SoccerNetv2/ResNET_TF2
 features_name: ResNET_TF2.npy # baidu_soccer_embeddings.npy
 clip_length: 120 # (in seconds)
@@ -53,4 +56,6 @@ n_predictions: 7
 
 lambda_coord: 5.0
 lambda_noobj: 0.5
+
+
 

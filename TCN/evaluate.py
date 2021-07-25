@@ -67,7 +67,7 @@ def main():
     # Dataloader
     downsamp_rate = 2 if config.dataset == "50salads" else 1
 
-    data = SoccerNetClips(
+    data = SoccerNetClipsTesting(
         data_path=config.features_path,
         label_path=config.labels_path,
         features=config.features_name,
@@ -124,6 +124,7 @@ def main():
             n_predictions=config.n_predictions,
             n_stages = config.n_stages,
             n_layers = config.n_layers,
+            small_net = config.small_net,
         )
 
     elif(config.model == "MultiStageAttentionTCN"):
@@ -154,6 +155,7 @@ def main():
     # train and validate model
     print("---------- Start testing ----------")
 
+    results = None
     # evaluation
     if(config.model == "ActionSegmentRefinementFramework" or config.model == "ActionSegmentRefinementAttentionFramework"):
         evaluateASRF(
@@ -180,6 +182,7 @@ def main():
             result_path,
             config,
         )
+
 
     print("Done")
 

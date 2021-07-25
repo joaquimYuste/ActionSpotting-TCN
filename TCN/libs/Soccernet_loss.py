@@ -37,16 +37,18 @@ class ContextAwareLoss(torch.nn.Module):
 
 class SpottingLoss(torch.nn.Module):
 
-    def __init__(self, lambda_coord, lambda_noobj):
+    def __init__(self, lambda_coord, lambda_noobj, weights=1):
         super(SpottingLoss,self).__init__()
 
         self.lambda_coord = lambda_coord
         self.lambda_noobj = lambda_noobj
 
+        self.W = weights
+
 
     def forward(self,y_true, y_pred):
         y_pred = self.permute_ypred_for_matching(y_true,y_pred)
-        loss = torch.sum(y_true[:,:,0]*self.lambda_coord*torch.square(y_true[:,:,1]-y_pred[:,:,1])  +  y_true[:,:,0]*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  (1-y_true[:,:,0])*self.lambda_noobj*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  y_true[:,:,0]*torch.sum(torch.square(y_true[:,:,2:]-y_pred[:,:,2:]),axis=-1)) #-y_true[:,:,0]*torch.sum(y_true[:,:,2:]*torch.log(y_pred[:,:,2:]),axis=-1)
+        loss = torch.sum(y_true[:,:,0]*self.lambda_coord*torch.square(y_true[:,:,1]-y_pred[:,:,1])  +  y_true[:,:,0]*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  (1-y_true[:,:,0])*self.lambda_noobj*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  y_true[:,:,0]*torch.sum(torch.square(self.W*(y_true[:,:,2:]-y_pred[:,:,2:])),axis=-1)) #-y_true[:,:,0]*torch.sum(y_true[:,:,2:]*torch.log(y_pred[:,:,2:]),axis=-1)
         return loss
 
 

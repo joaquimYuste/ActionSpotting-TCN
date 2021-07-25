@@ -1,7 +1,10 @@
 import os
 from typing import Optional, Tuple
 
+import zipfile
+import json
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,6 +15,8 @@ from libs.class_id_map import get_id2class_map
 from libs.metric import AverageMeter, BoundaryScoreMeter, ScoreMeter
 from libs.postprocess import PostProcessor
 from libs.save_predictions import save_predictions, save_preds
+from SoccerNet.Evaluation.utils import EVENT_DICTIONARY_V2, INVERSE_EVENT_DICTIONARY_V2
+from SoccerNet.Evaluation.ActionSpotting import evaluate
 
 from tqdm import tqdm
 
@@ -372,7 +377,7 @@ def evaluateASRF(
     )
 
 def evaluateMSTCN(
-    val_loader: DataLoader,
+    test_loader: DataLoader,
     model: nn.Module,
     device: str,
     dataset: str,
@@ -395,57 +400,175 @@ def evaluateMSTCN(
     elif (config.model == "MultiStageAttentionTCN"):
         model_name = "msatcn"
 
+    split = '_'.join(test_loader.dataset.split)
+    output_folder = f"outputs_{split}"
+
     file_name = model_name + "_s" + str(config.n_stages) + "_l" + str(config.n_layers) + "_feats" + str(config.n_features)
 
     save_dir = os.path.join(os.path.dirname(result_path), "predictions")
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
-    save_dir = os.path.join(save_dir, model_name)
+
+    output_zip = os.path.join(save_dir, model_name, f"results_spotting_{split}.zip")
+    metrics_result = os.path.join(save_dir, model_name, f"metrics_results_{split}.txt")
+    metrics_csv = os.path.join(save_dir, model_name, f"metrics_results_{split}.csv")
+
+    save_dir = os.path.join(save_dir, model_name, output_folder)
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
-    log = os.path.join(save_dir, "test_as_" + file_name + ".txt")
-    f = open(log, 'w')
-    with torch.no_grad() and tqdm(enumerate(val_loader), total=len(val_loader), ncols=160) as t:
-        for i, (feats, targets) in t:
+    #log = os.path.join(save_dir, "test_as_" + file_name + ".txt")
+    #f = open(log, 'w')
+    #with torch.no_grad() and tqdm(enumerate(val_loader), total=len(val_loader), ncols=160) as t:
+        #for i, (feats, targets) in t:
+    with tqdm(enumerate(test_loader), total=len(test_loader), ncols=120) as t:
+        for i, (game_ID, feat_half1, feat_half2, label_half1, label_half2) in t:
             # x = sample["feature"]
             # t = sample["label"]
 
             #x = x.to(device)
             #t = t.to(device)
+            game_ID = game_ID[0]
+            feat_half1 = feat_half1.squeeze(0)
+            feat_half1 = feat_half1.contiguous().view(feat_half1.shape[0], feat_half1.shape[2], feat_half1.shape[1]) # (B, C, N)
 
-            feats = feats.contiguous().view(feats.shape[0], feats.shape[2], feats.shape[1])
-            feats = feats.to(device)
+            feat_half2 = feat_half2.squeeze(0)
+            feat_half2 = feat_half2.contiguous().view(feat_half2.shape[0], feat_half2.shape[2], feat_half2.shape[1]) # (B, C, N)
+
+            feat_half1, feat_half2 = feat_half1.to(device), feat_half2.to(device)
+
+            label_half1 = label_half1.float().squeeze(0)
+            label_half2 = label_half2.float().squeeze(0)
+
+            #feats = feats.contiguous().view(feats.shape[0], feats.shape[2], feats.shape[1])
+            #feats = feats.to(device)
 
             # compute output and loss
-            out = model(feats)
+            out_half1 = model(feat_half1).to("cpu").data.numpy()
+            out_half2 = model(feat_half2).to("cpu").data.numpy()
 
-            batch_size, n_subclips, n_predictions, n_classes = targets.shape
+            feat_half1 = feat_half1.to("cpu").data.numpy()
+            feat_half2 = feat_half2.to("cpu").data.numpy()
+
+            json_data = dict()
+            json_data["UrlLocal"] = game_ID
+            json_data["predictions"] = list()
+
+            for half, predictions in enumerate([out_half1, out_half2]):
+                json_data = get_preds_info(json_data, half, predictions, test_loader.dataset
+                                           .window_size_frame, test_loader.dataset.framerate)
+
+            os.makedirs(os.path.join(save_dir, game_ID), exist_ok=True)
+            with open(os.path.join(save_dir, game_ID, "results_spotting.json"), 'w') as output_file:
+                json.dump(json_data, output_file, indent=4)
+
+    def zipResults(zip_path, target_dir, filename="results_spotting.json"):
+        zipobj = zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED)
+        rootlen = len(target_dir) + 1
+        for base, dirs, files in os.walk(target_dir):
+            for file in files:
+                if file == filename:
+                    fn = os.path.join(base, file)
+                    zipobj.write(fn, fn[rootlen:])
+
+    zipResults(zip_path=output_zip,
+               target_dir=save_dir,
+               filename="results_spotting.json")
+
+    results = evaluate(SoccerNet_path=test_loader.dataset.label_path,
+                       Predictions_path=output_zip,
+                       split="test",
+                       prediction_file="results_spotting.json",
+                       version=test_loader.dataset.version)
+
+    a_mAP = results["a_mAP"]
+    a_mAP_per_class = results["a_mAP_per_class"]
+    a_mAP_visible = results["a_mAP_visible"]
+    a_mAP_per_class_visible = results["a_mAP_per_class_visible"]
+    a_mAP_unshown = results["a_mAP_unshown"]
+    a_mAP_per_class_unshown = results["a_mAP_per_class_unshown"]
+
+    with open(metrics_result, 'w') as f:
+        f.write("Best Performance at end of training  \n")
+        f.write("a_mAP visibility all: " + str(a_mAP) + "\n")
+        f.write("a_mAP visibility all per class: " + str(a_mAP_per_class) + "\n")
+        f.write("a_mAP visibility visible: " + str(a_mAP_visible) + "\n")
+        f.write("a_mAP visibility visible per class: " + str(a_mAP_per_class_visible) + "\n")
+        f.write("a_mAP visibility unshown: " + str(a_mAP_unshown) + "\n")
+        f.write("a_mAP visibility unshown per class: " + str(a_mAP_per_class_unshown) + "\n")
+
+        f.close()
+
+    columns = ["SoccernetNet-v2","shown","unshown"]
+    for c in EVENT_DICTIONARY_V2.keys():
+        columns.append(c)
+
+    log = pd.DataFrame(columns=columns)
+
+    tmp = [round(a_mAP*100,2), round(a_mAP_visible*100,2), round(a_mAP_unshown*100,2)]
+    for score in a_mAP_per_class:
+        tmp.append(round(score*100,2))
+
+    tmp_df = pd.Series(tmp, index=log.columns)
+
+    log = log.append(tmp_df, ignore_index=True)
+    log.to_csv(metrics_csv, index=False)
+
+    return
+
             #targets = targets.reshape(batch_size * n_subclips, n_predictions, n_classes)
             #out = out.reshape(batch_size * n_subclips, n_predictions, n_classes)
 
             # calcualte accuracy and f1 score
-            out = out.to("cpu").data.numpy()
+            #out = out.to("cpu").data.numpy()
 
-            feats = feats.to("cpu").data.numpy()
-
-            targets = parse_labels(targets, config)
-            out = parse_labels(out, config)
+            #targets = parse_labels(targets, config)
+            #out = parse_labels(out, config)
 
             # save logs
 
-            targets = targets.reshape((targets.shape[0], targets.shape[1], 1))
-            out = out.reshape((out.shape[0], out.shape[1], 1))
+            #targets = targets.reshape((targets.shape[0], targets.shape[1], 1))
+            #out = out.reshape((out.shape[0], out.shape[1], 1))
 
-            comparison = np.concatenate((targets, out), axis=-1)
-            save_preds(f, comparison)
-    f.close()
+            #comparison = np.concatenate((targets, out), axis=-1)
+            #save_preds(f, comparison)
+    #f.close()
             # update score
             #scores.update(output_cls, t)
 
     #print("Scores:", scores.get_scores())
 
-def parse_labels(labels, config):
+def get_preds_info(json_data, half, preds, clip_length, framerate):
+    clips, n_subclips, n_predictions, n_classes = preds.shape
+    n_subclip_frames = int(clip_length / n_subclips)
+    #result = np.zeros((batch_size, n_subclips, n_subclip_frames))
+    for clip in range(clips):
+        for subclip in range(n_subclips):
+            for pred in range(n_predictions):
+                confidence = preds[clip][subclip][pred][0]
+
+                #if(confidence>= 0.1):
+                subclip_frame = int(preds[clip][subclip][pred][1].item() * n_subclip_frames)
+                clip_frame = subclip_frame + subclip * n_subclip_frames
+                game_frame = clip_frame + clip * clip_length
+
+                seconds = int((game_frame // framerate) % 60)
+                minutes = int((game_frame // framerate) // 60)
+
+                action = np.argmax(preds[clip][subclip][pred][2:]).item()
+
+                prediction_data = dict()
+                prediction_data["gameTime"] = str(half + 1) + " - " + str(minutes) + ":" + str(seconds)
+                prediction_data["label"] = INVERSE_EVENT_DICTIONARY_V2[action]
+                prediction_data["position"] = str(int((game_frame / framerate) * 1000))
+                prediction_data["half"] = str(half + 1)
+                prediction_data["confidence"] = str(confidence)
+                json_data["predictions"].append(prediction_data)
+
+    return json_data
+
+
+def parse_labels_to_arrays(labels, config):
     batch_size, n_subclips, n_predictions, n_classes = labels.shape
     n_frames = config.clip_length*2
     n_subclip_frames = int(n_frames/n_subclips)

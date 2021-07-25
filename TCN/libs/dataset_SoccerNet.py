@@ -132,6 +132,8 @@ class SoccerNetClips(Dataset):
             self.num_classes = len(EVENT_DICTIONARY_V2)
             self.labels="Labels-v2.json"
 
+        self.class_count = np.zeros((self.num_classes))
+
         #logging.info("Checking/Download features and labels locally")
         #downloader = SoccerNetDownloader(path)
         #downloader.downloadGames(files=[self.labels, f"1_{self.features}", f"2_{self.features}"], split=split, verbose=False,randomized=True)
@@ -160,8 +162,8 @@ class SoccerNetClips(Dataset):
             #else:
             #    label_half1, label_half2 = self.integer_enc(feat_half1), self.integer_enc(feat_half2)
 
-            label_half1 = groundtruth_table(feat_half1, n_subclips, n_predictions)
-            label_half2 = groundtruth_table(feat_half2, n_subclips, n_predictions)
+            label_half1 = groundtruth_table(feat_half1, n_subclips, n_predictions, self.num_classes)
+            label_half2 = groundtruth_table(feat_half2, n_subclips, n_predictions, self.num_classes)
 
             for annotation in labels["annotations"]:
 
@@ -174,22 +176,8 @@ class SoccerNetClips(Dataset):
                 seconds = int(time[-2::])
                 time = seconds + 60 * minutes
                 frame = framerate * time
-                frame_segment = frame%self.window_size_frame
-                segment = 4
+                frame_segment = frame % self.window_size_frame
                 n_segment = frame // self.window_size_frame
-                left_segment = float('inf')
-                right_segment = float('inf')
-
-                if(frame_segment-segment >= 0):
-                    left = frame_segment-segment
-                else:
-                    left = 0
-                    left_segment = frame_segment-segment
-                if(frame_segment+segment+1 <= self.window_size_frame):
-                    right = frame_segment+segment+1
-                else:
-                    right = self.window_size_frame
-                    right_segment = frame_segment+segment+1 - self.window_size_frame
 
                 if version == 1:
                     if "card" in event: label = 0
@@ -207,59 +195,22 @@ class SoccerNetClips(Dataset):
                 if half == 2 and n_segment>=label_half2.shape[0]:
                     continue
 
+                self.class_count[label] += 1
                 if half == 1:
                     label_half1 = parse_groundtruth_table(self.window_size_frame, self.n_subclips, self.n_predictions, label_half1, n_segment,  frame_segment, label)
-                    #if self.onehot:
-                    #    label_half1 = self.parse_onehot_label(
-                    #        label_half1,
-                    #        n_segment,
-                    #        left_segment,
-                    #        right_segment,
-                    #        left,
-                    #        right,
-                    #        label
-                    #        )
-                    #else:
-                    #    label_half1 = self.parse_integer_label(
-                    #        label_half1,
-                    #        n_segment,
-                    #        left_segment,
-                    #        right_segment,
-                    #        left,
-                    #        right,
-                    #        label
-                    #        )
 
                 if half == 2:
                     label_half2 = parse_groundtruth_table(self.window_size_frame, self.n_subclips, self.n_predictions, label_half2, n_segment,  frame_segment, label)
-                    #if self.onehot:
-                    #    label_half2 = self.parse_onehot_label(
-                    #        label_half2,
-                    #        n_segment,
-                    #        left_segment,
-                    #        right_segment,
-                    #        left,
-                    #        right,
-                    #        label
-                    #        )
-                    #else:
-                    #    label_half2 = self.parse_integer_label(
-                    #        label_half2,
-                    #        n_segment,
-                    #        left_segment,
-                    #        right_segment,
-                    #        left,
-                    #        right,
-                    #        label
-                    #        )
-            
+
             self.game_feats.append(feat_half1)
             self.game_feats.append(feat_half2)
             self.game_labels.append(label_half1)
             self.game_labels.append(label_half2)
 
+
         self.game_feats = np.concatenate(self.game_feats)
         self.game_labels = np.concatenate(self.game_labels)
+
 
 
     def __getitem__(self, index):
@@ -278,9 +229,10 @@ class SoccerNetClips(Dataset):
 
 
 class SoccerNetClipsTesting(Dataset):
-    def __init__(self, path, features="ResNET_PCA512.npy", split=["test"], version=2, 
+    def __init__(self, data_path, label_path, features="ResNET_PCA512.npy", split=["test"], version=2,
                 framerate=2, window_size=120, n_subclips=1, n_predictions=6):
-        self.path = path
+        self.data_path = data_path
+        self.label_path = label_path
         self.listGames = getListGames(split)
         self.features = features
         self.window_size_frame = window_size*framerate
@@ -318,20 +270,26 @@ class SoccerNetClipsTesting(Dataset):
             label_half2 (np.array): labels (one-hot) for the 2nd half.
         """
         # Load features
-        feat_half1 = np.load(os.path.join(self.path, self.listGames[index], "1_" + self.features))
+        feat_half1 = np.load(os.path.join(self.data_path, self.listGames[index], "1_" + self.features))
         feat_half1 = feat_half1.reshape(-1, feat_half1.shape[-1])
-        feat_half2 = np.load(os.path.join(self.path, self.listGames[index], "2_" + self.features))
+        feat_half2 = np.load(os.path.join(self.data_path, self.listGames[index], "2_" + self.features))
         feat_half2 = feat_half2.reshape(-1, feat_half2.shape[-1])
 
+        feat_half1 = feats2clip(torch.from_numpy(feat_half1),
+                        stride=self.window_size_frame, #off=int(self.window_size_frame/2),
+                        clip_length=self.window_size_frame)
+
+        feat_half2 = feats2clip(torch.from_numpy(feat_half2),
+                        stride=self.window_size_frame, #off=int(self.window_size_frame/2),
+                        clip_length=self.window_size_frame)
+
         # Load labels
-        #label_half1 = np.zeros((feat_half1.shape[0], self.num_classes))
-        #label_half2 = np.zeros((feat_half2.shape[0], self.num_classes))
-        label_half1 = groundtruth_table(feat_half1, self.n_subclips, self.n_predictions)
-        label_half2 = groundtruth_table(feat_half2, self.n_subclips, self.n_predictions)
+        label_half1 = groundtruth_table(feat_half1, self.n_subclips, self.n_predictions, self.num_classes)
+        label_half2 = groundtruth_table(feat_half2, self.n_subclips, self.n_predictions, self.num_classes)
 
         # check if annoation exists
-        if os.path.exists(os.path.join(self.path, self.listGames[index], self.labels)):
-            labels = json.load(open(os.path.join(self.path, self.listGames[index], self.labels)))
+        if os.path.exists(os.path.join(self.label_path, self.listGames[index], self.labels)):
+            labels = json.load(open(os.path.join(self.label_path, self.listGames[index], self.labels)))
 
             for annotation in labels["annotations"]:
 
@@ -344,8 +302,10 @@ class SoccerNetClipsTesting(Dataset):
                 seconds = int(time[-2::])
                 frame = self.framerate * ( seconds + 60 * minutes )
                 frame_segment = frame%self.window_size_frame
-                segment = 4
                 n_segment = frame // self.window_size_frame
+
+                if(n_segment>=label_half1.shape[0]):
+                    continue
 
                 if self.version == 1:
                     if "card" in event: label = 0
@@ -356,11 +316,6 @@ class SoccerNetClipsTesting(Dataset):
                     if event not in self.dict_event:
                         continue
                     label = self.dict_event[event]
-
-                value = 1
-                #if "visibility" in annotation.keys():
-                 #   if annotation["visibility"] == "not shown":
-                  #      value = -1
 
                 if half == 1:
                     #frame = min(frame, feat_half1.shape[0]-1)
@@ -374,17 +329,6 @@ class SoccerNetClipsTesting(Dataset):
                     #label_half2[frame][label] = value
                     label_half2 = parse_groundtruth_table(self.window_size_frame, self.n_subclips, self.n_predictions,
                                                           label_half2, n_segment, frame_segment, label)
-
-        
-            
-
-        feat_half1 = feats2clip(torch.from_numpy(feat_half1), 
-                        stride=self.window_size_frame, #off=int(self.window_size_frame/2),
-                        clip_length=self.window_size_frame)
-
-        feat_half2 = feats2clip(torch.from_numpy(feat_half2), 
-                        stride=self.window_size_frame, #off=int(self.window_size_frame/2),
-                        clip_length=self.window_size_frame)
 
         
         return self.listGames[index], feat_half1, feat_half2, label_half1, label_half2
