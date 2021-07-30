@@ -17,6 +17,7 @@ from libs.postprocess import PostProcessor
 from libs.save_predictions import save_predictions, save_preds
 from SoccerNet.Evaluation.utils import EVENT_DICTIONARY_V2, INVERSE_EVENT_DICTIONARY_V2
 from SoccerNet.Evaluation.ActionSpotting import evaluate
+import torch.nn.functional as F
 
 from tqdm import tqdm
 
@@ -444,8 +445,8 @@ def evaluateMSTCN(
             #feats = feats.to(device)
 
             # compute output and loss
-            out_half1 = model(feat_half1).to("cpu").data.numpy()
-            out_half2 = model(feat_half2).to("cpu").data.numpy()
+            out_half1 = F.softmax(model(feat_half1), dim=-1).to("cpu").data.numpy()
+            out_half2 = F.softmax(model(feat_half2), dim=-1).to("cpu").data.numpy()
 
             feat_half1 = feat_half1.to("cpu").data.numpy()
             feat_half2 = feat_half2.to("cpu").data.numpy()

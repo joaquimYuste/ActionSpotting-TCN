@@ -20,15 +20,15 @@ iou_thresholds:
 - 0.5
 lambda_b: 0.1
 learning_rate: 0.0005
-max_epoch: 100
+max_epoch: 201
 model: MultiStageTCN
-small_net: true
+small_net: false
 momentum: 0.9
-n_features: 64
+n_features: 512
 attn_kernel: 11
 n_heads: 4
 n_attn_layers: 3
-n_layers: 10
+n_layers: 6
 n_stages: 1
 n_stages_asb: 1
 n_stages_brb: 1
@@ -45,7 +45,8 @@ weight_decay: 0.0001
 # dataset / data parsing (soccernet)
 
 #features_path: /data-net/datasets/SoccerNetv2/ResNET_TF2 # Baidu_features
-features_path: /data-local/data4-ssd/jyuste/ResNET_TF2
+#features_path: /data-local/data4-ssd/jyuste/ResNET_TF2
+features_path: /data-net/datasets/SoccerNetv2/ResNET_TF2
 labels_path: /data-net/datasets/SoccerNetv2/ResNET_TF2
 features_name: ResNET_TF2.npy # baidu_soccer_embeddings.npy
 clip_length: 120 # (in seconds)

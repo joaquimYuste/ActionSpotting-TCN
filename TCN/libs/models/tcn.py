@@ -108,9 +108,10 @@ class MultiStageTCN(nn.Module):
         out = out.contiguous().view(batch, length, chann)
         out = out.reshape((batch, length, self.n_predictions, self.n_classes + 2))
 
-        out_prob_softmax = F.softmax(out[..., 2:], dim=-1)
+        #out_prob_softmax = F.softmax(out[..., 2:], dim=-1)
+        out_classes = out[..., 2:]
         out_prob_sigmoid = F.sigmoid(out[...,:2])
-        out_prob = torch.cat((out_prob_sigmoid, out_prob_softmax), dim=-1)
+        out_prob = torch.cat((out_prob_sigmoid, out_classes), dim=-1)
 
         return out_prob # out: [Batch_size, n_subclips, n_predictions, confidence + offset + n_classes)
 

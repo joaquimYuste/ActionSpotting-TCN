@@ -1,4 +1,5 @@
 import torch
+from torch.nn import CrossEntropyLoss
 
 
 ####################################################################################################################################################
@@ -45,10 +46,26 @@ class SpottingLoss(torch.nn.Module):
 
         self.W = weights
 
+        self.bce_loss = CrossEntropyLoss(reduction="mean")
+
+
+
 
     def forward(self,y_true, y_pred):
         y_pred = self.permute_ypred_for_matching(y_true,y_pred)
-        loss = torch.sum(y_true[:,:,0]*self.lambda_coord*torch.square(y_true[:,:,1]-y_pred[:,:,1])  +  y_true[:,:,0]*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  (1-y_true[:,:,0])*self.lambda_noobj*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  y_true[:,:,0]*torch.sum(torch.square(self.W*(y_true[:,:,2:]-y_pred[:,:,2:])),axis=-1)) #-y_true[:,:,0]*torch.sum(y_true[:,:,2:]*torch.log(y_pred[:,:,2:]),axis=-1)
+
+        # New loss
+        # pred_class is BS x 7 x C -> BS x C x 7
+        pred_class = y_pred[:,:,2:]
+        pred_class = pred_class.permute(0, 2, 1)
+
+        # target_class is originally BS x 7 x C
+        # then argmax: BS x 7 x C -> BS x 7
+        target_class = y_true[:,:,2:]
+        target_class = torch.argmax(target_class, axis=-1)
+        cls_loss = self.bce_loss(pred_class, target_class)
+
+        loss = torch.sum(y_true[:,:,0]*self.lambda_coord*torch.square(y_true[:,:,1]-y_pred[:,:,1])  +  y_true[:,:,0]*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  (1-y_true[:,:,0])*self.lambda_noobj*torch.square(y_true[:,:,0]-y_pred[:,:,0]) +  y_true[:,:,0]*cls_loss) #-y_true[:,:,0]*torch.sum(y_true[:,:,2:]*torch.log(y_pred[:,:,2:]),axis=-1)
         return loss
 
 
